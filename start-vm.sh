@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/vm-config.json"
 
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo "Error: vm-config.json not found"
+    echo "Error: vm-config.json not found" >&2
     exit 1
 fi
 
@@ -28,7 +28,7 @@ check_vm_running() {
 
 # Start VM using UTM CLI
 start_vm() {
-    echo "Starting Kali VM..."
+    echo "Starting Kali VM..." >&2
 
     # Try using UTM's command line interface
     if command -v utmctl &> /dev/null; then
@@ -53,39 +53,39 @@ EOF
 
 # Wait for VM to be SSH accessible
 wait_for_vm() {
-    echo "Waiting for VM to be ready..."
+    echo "Waiting for VM to be ready..." >&2
     local max_attempts=30
     local attempt=0
 
     while [ $attempt -lt $max_attempts ]; do
         if check_vm_running; then
-            echo "✅ Kali VM is ready!"
+            echo "✅ Kali VM is ready!" >&2
             return 0
         fi
 
         attempt=$((attempt + 1))
-        echo -n "."
+        echo -n "." >&2
         sleep 2
     done
 
-    echo ""
-    echo "⚠️  Timeout waiting for VM to start"
+    echo "" >&2
+    echo "⚠️  Timeout waiting for VM to start" >&2
     return 1
 }
 
 # Main logic
-echo "🔍 Checking Kali VM status..."
+echo "🔍 Checking Kali VM status..." >&2
 
 if check_vm_running; then
-    echo "✅ Kali VM is already running at $VM_HOST"
+    echo "✅ Kali VM is already running at $VM_HOST" >&2
     exit 0
 fi
 
-echo "⚠️  Kali VM is not running. Starting..."
+echo "⚠️  Kali VM is not running. Starting..." >&2
 
 # Check if UTM is installed
 if [ ! -d "/Applications/UTM.app" ]; then
-    echo "❌ UTM is not installed. Please install it first."
+    echo "❌ UTM is not installed. Please install it first." >&2
     exit 1
 fi
 
@@ -96,6 +96,6 @@ start_vm
 if wait_for_vm; then
     exit 0
 else
-    echo "❌ Failed to start VM. Please start it manually in UTM."
+    echo "❌ Failed to start VM. Please start it manually in UTM." >&2
     exit 1
 fi

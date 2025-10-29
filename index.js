@@ -9,7 +9,6 @@ import { Client } from 'ssh2';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -234,20 +233,7 @@ class KaliMCPServer {
     });
   }
 
-  async ensureVMRunning() {
-    try {
-      const startScript = join(__dirname, 'start-vm.sh');
-      console.error('Checking VM status...');
-      execSync(startScript, { stdio: 'inherit' });
-    } catch (error) {
-      console.error('Warning: Could not auto-start VM. Please start it manually in UTM.');
-    }
-  }
-
   async run() {
-    // Auto-start VM if not running
-    await this.ensureVMRunning();
-
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     console.error('Kali VM MCP server running on stdio');
