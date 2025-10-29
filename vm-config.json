@@ -1,0 +1,7 @@
+{
+  "host": "192.168.2.212",
+  "port": 22,
+  "username": "kali",
+  "privateKeyPath": "/Users/eniveshi/.ssh/kali_mcp",
+  "workingDirectory": "/home/kali"
+}

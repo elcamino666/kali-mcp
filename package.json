@@ -1,7 +1,7 @@
 {
-  "name": "kali-docker-mcp-server",
-  "version": "1.0.0",
-  "description": "MCP server for executing commands in Kali Linux Docker container",
+  "name": "kali-vm-mcp-server",
+  "version": "2.0.0",
+  "description": "MCP server for executing commands in Kali Linux VM via SSH",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
-    "dockerode": "^4.0.2"
+    "ssh2": "^1.15.0"
   }
 }

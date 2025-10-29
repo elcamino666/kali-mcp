@@ -5,17 +5,23 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import Docker from 'dockerode';
+import { Client } from 'ssh2';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
-const docker = new Docker();
-const CONTAINER_NAME = 'kali-linux-mcp';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load VM configuration
+const config = JSON.parse(readFileSync(join(__dirname, 'vm-config.json'), 'utf8'));
 
 class KaliMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name: 'kali-docker-mcp',
-        version: '1.0.0',
+        name: 'kali-vm-mcp',
+        version: '2.0.0',
       },
       {
         capabilities: {
@@ -33,7 +39,7 @@ class KaliMCPServer {
       tools: [
         {
           name: 'kali_exec',
-          description: 'Execute a command in the Kali Linux Docker container',
+          description: 'Execute a command in the Kali Linux VM',
           inputSchema: {
             type: 'object',
             properties: {
@@ -43,8 +49,8 @@ class KaliMCPServer {
               },
               workdir: {
                 type: 'string',
-                description: 'Working directory (optional, defaults to /root)',
-                default: '/root',
+                description: 'Working directory (optional, defaults to /home/kali)',
+                default: config.workingDirectory,
               },
             },
             required: ['command'],
@@ -52,7 +58,7 @@ class KaliMCPServer {
         },
         {
           name: 'kali_install',
-          description: 'Install additional tools in Kali Linux container',
+          description: 'Install additional tools in Kali Linux VM',
           inputSchema: {
             type: 'object',
             properties: {
@@ -73,8 +79,8 @@ class KaliMCPServer {
           },
         },
         {
-          name: 'kali_container_status',
-          description: 'Check the status of the Kali Linux container',
+          name: 'kali_vm_status',
+          description: 'Check the status of the Kali Linux VM connection',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -90,17 +96,17 @@ class KaliMCPServer {
       try {
         switch (name) {
           case 'kali_exec':
-            return await this.executeCommand(args.command, args.workdir || '/root');
-          
+            return await this.executeCommand(args.command, args.workdir || config.workingDirectory);
+
           case 'kali_install':
             return await this.installPackages(args.packages);
-          
+
           case 'kali_list_tools':
             return await this.listTools();
-          
-          case 'kali_container_status':
-            return await this.getContainerStatus();
-          
+
+          case 'kali_vm_status':
+            return await this.getVMStatus();
+
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -118,123 +124,119 @@ class KaliMCPServer {
     });
   }
 
-  async getContainer() {
-    const containers = await docker.listContainers({ all: true });
-    const container = containers.find(
-      (c) => c.Names.includes(`/${CONTAINER_NAME}`) || c.Names.includes(CONTAINER_NAME)
-    );
-    
-    if (!container) {
-      throw new Error(`Container '${CONTAINER_NAME}' not found. Please start it with: docker-compose up -d`);
-    }
-    
-    return docker.getContainer(container.Id);
-  }
-
-  async executeCommand(command, workdir = '/root') {
-    const container = await this.getContainer();
-    
-    // Check if container is running
-    const containerInfo = await container.inspect();
-    if (!containerInfo.State.Running) {
-      throw new Error('Container is not running. Start it with: docker-compose up -d');
-    }
-
-    const exec = await container.exec({
-      Cmd: ['/bin/bash', '-c', command],
-      AttachStdout: true,
-      AttachStderr: true,
-      WorkingDir: workdir,
-    });
-
-    const stream = await exec.start({ hijack: true, stdin: false });
-    
+  async executeCommand(command, workdir = config.workingDirectory) {
     return new Promise((resolve, reject) => {
+      const conn = new Client();
       let output = '';
       let errorOutput = '';
 
-      stream.on('data', (chunk) => {
-        const data = chunk.toString('utf8');
-        // Docker multiplexes stdout and stderr, first byte indicates stream type
-        if (chunk[0] === 1) {
-          output += data.slice(8); // stdout
-        } else if (chunk[0] === 2) {
-          errorOutput += data.slice(8); // stderr
-        } else {
-          output += data;
-        }
-      });
+      conn.on('ready', () => {
+        // Change to working directory and execute command
+        const fullCommand = `cd ${workdir} && ${command}`;
 
-      stream.on('end', async () => {
-        const execInfo = await exec.inspect();
-        const fullOutput = output + errorOutput;
-        
-        resolve({
-          content: [
-            {
-              type: 'text',
-              text: `Command: ${command}\nWorking Directory: ${workdir}\nExit Code: ${execInfo.ExitCode}\n\nOutput:\n${fullOutput || '(no output)'}`,
-            },
-          ],
+        conn.exec(fullCommand, (err, stream) => {
+          if (err) {
+            conn.end();
+            reject(err);
+            return;
+          }
+
+          stream.on('close', (code, signal) => {
+            conn.end();
+            const fullOutput = output + errorOutput;
+
+            resolve({
+              content: [
+                {
+                  type: 'text',
+                  text: `Command: ${command}\nWorking Directory: ${workdir}\nExit Code: ${code}\n\nOutput:\n${fullOutput || '(no output)'}`,
+                },
+              ],
+            });
+          }).on('data', (data) => {
+            output += data.toString('utf8');
+          }).stderr.on('data', (data) => {
+            errorOutput += data.toString('utf8');
+          });
         });
+      }).on('error', (err) => {
+        reject(new Error(`SSH connection error: ${err.message}`));
       });
 
-      stream.on('error', (err) => {
-        reject(new Error(`Execution error: ${err.message}`));
+      // Connect using SSH key
+      conn.connect({
+        host: config.host,
+        port: config.port,
+        username: config.username,
+        privateKey: readFileSync(config.privateKeyPath),
       });
     });
   }
 
   async installPackages(packages) {
-    const command = `apt-get update && apt-get install -y ${packages}`;
+    const command = `sudo apt-get update && sudo apt-get install -y ${packages}`;
     return await this.executeCommand(command);
   }
 
   async listTools() {
-    const command = 'dpkg -l | grep kali-tools';
+    const command = 'dpkg -l | grep -E "nmap|metasploit|aircrack|wireshark|sqlmap"';
     return await this.executeCommand(command);
   }
 
-  async getContainerStatus() {
-    try {
-      const container = await this.getContainer();
-      const info = await container.inspect();
-      
-      const status = {
-        name: info.Name,
-        id: info.Id.substring(0, 12),
-        state: info.State.Status,
-        running: info.State.Running,
-        created: info.Created,
-        image: info.Config.Image,
-        ip: info.NetworkSettings.Networks?.['kali-mcp_kali-network']?.IPAddress || 'N/A',
-      };
+  async getVMStatus() {
+    return new Promise((resolve, reject) => {
+      const conn = new Client();
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Container Status:\n${JSON.stringify(status, null, 2)}`,
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error getting container status: ${error.message}`,
-          },
-        ],
-        isError: true,
-      };
-    }
+      conn.on('ready', () => {
+        conn.exec('uname -a && uptime && ip addr show | grep "inet "', (err, stream) => {
+          if (err) {
+            conn.end();
+            reject(err);
+            return;
+          }
+
+          let output = '';
+
+          stream.on('close', () => {
+            conn.end();
+
+            resolve({
+              content: [
+                {
+                  type: 'text',
+                  text: `VM Status:\nHost: ${config.host}\nUsername: ${config.username}\nConnection: Active\n\nSystem Info:\n${output}`,
+                },
+              ],
+            });
+          }).on('data', (data) => {
+            output += data.toString('utf8');
+          });
+        });
+      }).on('error', (err) => {
+        resolve({
+          content: [
+            {
+              type: 'text',
+              text: `VM Connection Error:\nHost: ${config.host}\nError: ${err.message}\n\nPlease ensure:\n1. Kali VM is running in UTM\n2. SSH is enabled in the VM\n3. Network configuration is correct`,
+            },
+          ],
+          isError: true,
+        });
+      });
+
+      conn.connect({
+        host: config.host,
+        port: config.port,
+        username: config.username,
+        privateKey: readFileSync(config.privateKeyPath),
+      });
+    });
   }
 
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('Kali Docker MCP server running on stdio');
+    console.error('Kali VM MCP server running on stdio');
   }
 }
 

@@ -7,8 +7,7 @@ services:
     hostname: kali-mcp
     stdin_open: true
     tty: true
-    networks:
-      - kali-network
+    network_mode: "host"
     volumes:
       - kali-data:/root
       - ./shared:/shared
@@ -16,10 +15,6 @@ services:
       - NET_ADMIN
       - NET_RAW
     restart: unless-stopped
-
-networks:
-  kali-network:
-    driver: bridge
 
 volumes:
   kali-data:
